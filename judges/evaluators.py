@@ -84,34 +84,47 @@ Rubric: {rubric}
 Respond with ONLY a JSON object in this exact format:
 {{"score": 0.0, "reasoning": "your reasoning here"}}
 
-Score must be between 0.0 and 1.0."""
+Score must be between 0.0 and 1.0.
+Ensure the reasoning field contains no unescaped quotation marks or newlines."""
 
-        try:
-            result = self.client.messages.create(
-                model=self.model,
-                max_tokens=200,
-                messages=[{"role": "user", "content": judge_prompt}],
-            )
-            import json
-            text = result.content[0].text.strip()
-            # Strip markdown if present
-            text = text.replace("```json", "").replace("```", "").strip()
-            parsed = json.loads(text)
-            score = float(parsed.get("score", 0.0))
-            passed = score >= self.threshold
-            return {
-                "judge": "llm",
-                "passed": passed,
-                "score": score,
-                "detail": parsed.get("reasoning", ""),
-            }
-        except Exception as e:
-            return {
-                "judge": "llm",
-                "passed": False,
-                "score": 0.0,
-                "detail": f"Judge error: {str(e)}",
-            }
+        import json
+        last_error = None
+
+        for attempt in range(2):
+            try:
+                result = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=200,
+                    messages=[{"role": "user", "content": judge_prompt}],
+                )
+                text = result.content[0].text.strip()
+                text = text.replace("```json", "").replace("```", "").strip()
+                parsed = json.loads(text)
+                score = float(parsed.get("score", 0.0))
+                passed = score >= self.threshold
+                return {
+                    "judge": "llm",
+                    "passed": passed,
+                    "score": score,
+                    "detail": parsed.get("reasoning", ""),
+                }
+            except json.JSONDecodeError as e:
+                last_error = e
+                continue
+            except Exception as e:
+                return {
+                    "judge": "llm",
+                    "passed": False,
+                    "score": 0.0,
+                    "detail": f"Judge error: {str(e)}",
+                }
+
+        return {
+            "judge": "llm",
+            "passed": False,
+            "score": 0.0,
+            "detail": f"Judge JSON parse failed after retry: {str(last_error)}",
+        }
 
 
 class LatencyJudge:
